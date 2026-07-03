@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>포니봇 통합 제어 — 손 제스처(주행 + 로봇팔)</title>
+<style>
+  :root{
+    --bg:#0e1726; --card:#16213a; --line:#27375c;
+    --txt:#e8eefc; --muted:#8da3cc; --accent:#34d399; --warn:#f87171;
+    --base:#60a5fa; --sh:#f59e0b; --grip:#34d399; --drive:#a78bfa;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',-apple-system,sans-serif;}
+  body{background:var(--bg);color:var(--txt);padding:16px;max-width:980px;margin:0 auto;}
+  h1{font-size:20px;margin-bottom:4px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:14px;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;}
+  .col{flex:1;min-width:320px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;}
+  .videowrap{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:4/3;}
+  video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  canvas{transform:scaleX(-1);}
+  video{transform:scaleX(-1);visibility:hidden;}
+  button{background:var(--accent);color:#06281c;border:none;border-radius:10px;
+    padding:11px 14px;font-size:14px;font-weight:700;cursor:pointer;}
+  button.sec{background:#22325a;color:var(--txt);}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;}
+  .ok{background:#0f3d2e;color:var(--accent);}
+  .no{background:#3d1414;color:var(--warn);}
+  .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;}
+  .joint{margin:12px 0;}
+  .joint .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;}
+  .joint .nm{font-weight:700;font-size:14px;}
+  .joint .val{font-size:22px;font-weight:800;}
+  .gauge{height:14px;background:#0c1426;border:1px solid var(--line);border-radius:999px;overflow:hidden;}
+  .gauge>div{height:100%;width:50%;transition:width .08s linear;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  code{background:#0c1426;padding:2px 6px;border-radius:6px;color:#fbbf24;font-size:12px;}
+  .note{font-size:12px;color:var(--muted);line-height:1.6;}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--txt);cursor:pointer;}
+  input[type=range]{width:100%;}
+  .minirow{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;}
+
+  /* 모드 배지 */
+  .modebar{display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;
+    border:2px solid var(--line);margin-bottom:14px;transition:.2s;}
+  .modebar .big{font-size:22px;font-weight:800;}
+  .modebar .desc{font-size:13px;color:var(--muted);}
+  body.arm   .modebar{border-color:var(--base); background:linear-gradient(90deg,#12224a,#16213a);}
+  body.drive .modebar{border-color:var(--drive);background:linear-gradient(90deg,#2a1f4a,#16213a);}
+  .panel{transition:opacity .2s, filter .2s;}
+  .panel.off{opacity:.32;filter:grayscale(.6);pointer-events:none;}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;}
+  .tag.arm{background:#12224a;color:var(--base);}
+  .tag.drive{background:#2a1f4a;color:var(--drive);}
+
+  /* 주행 표시 */
+  .drivebox{display:flex;align-items:center;gap:16px;margin-top:6px;}
+  #count{font-size:44px;font-weight:800;color:var(--drive);min-width:56px;text-align:center;}
+  #driveCmd{font-size:22px;font-weight:800;color:var(--drive);}
+  .legend{font-size:13px;line-height:1.9;color:var(--muted);}
+  .legend b{color:var(--txt);}
+  .thumbbar{height:12px;background:#0c1426;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin-top:6px;position:relative;}
+  .thumbbar>i{display:block;height:100%;background:var(--accent);width:0%;}
+  .thumbbar>span{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn);}
+</style>
+</head>
+<body class="arm">
+  <h1>🤖 포니봇 통합 제어 — 손 제스처</h1>
+  <div class="sub">엄지 펼침 = 🦾 로봇팔 · 엄지 접고 손가락 개수 = 🚗 주행(1전진 2후진 3좌 4우, 주먹=정지) · MediaPipe Hands + Web Bluetooth</div>
+
+  <!-- 모드 배지 -->
+  <div class="modebar">
+    <div class="big" id="modeIcon">🦾</div>
+    <div>
+      <div class="big" id="modeName">로봇팔 모드</div>
+      <div class="desc" id="modeDesc">엄지를 펼치면 손 위치로 팔을, 엄지·검지 간격으로 집게를 제어합니다.</div>
+    </div>
+    <div style="margin-left:auto;text-align:right">
+      <div class="label">엄지 벌림</div>
+      <div style="font-weight:800;font-size:18px" id="thumbVal">–</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- 카메라 -->
+    <div class="col">
+      <div class="card">
+        <div class="videowrap">
+          <video id="video" playsinline></video>
+          <canvas id="canvas"></canvas>
+        </div>
+        <div class="btns">
+          <button id="btnCam">📷 카메라 시작</button>
+          <button id="btnBle" class="sec">🔵 블루투스 연결</button>
+          <button id="btnHome" class="sec">🏠 팔 HOME</button>
+        </div>
+        <div class="grid2" style="margin-top:12px">
+          <div><div class="label">블루투스</div><span id="bleState" class="pill no">미연결</span></div>
+          <div><div class="label">손 인식</div><span id="handState" class="pill no">대기</span></div>
+        </div>
+      </div>
+
+      <!-- 모드 전환 감도 보정 -->
+      <div class="card">
+        <div class="label" style="margin-bottom:6px">모드 전환 감도 (엄지 벌림 기준값)</div>
+        <input id="thumbThr" type="range" min="30" max="120" value="60">
+        <div class="thumbbar"><i id="thumbFill"></i><span id="thumbMark"></span></div>
+        <div class="note">막대가 빨간 선을 넘으면 <b>로봇팔 모드</b>, 못 넘으면 <b>주행 모드</b>입니다.
+          손/카메라에 맞게 이 값을 조절하세요. (현재 기준: <span id="thumbThrVal">0.60</span>)</div>
+      </div>
+    </div>
+
+    <!-- 오른쪽: 두 모드 패널 -->
+    <div class="col">
+      <!-- 로봇팔 패널 -->
+      <div class="card panel" id="armPanel">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="label">🦾 로봇팔 제어</div><span class="tag arm">ARM</span>
+        </div>
+        <div class="joint">
+          <div class="top"><span class="nm" style="color:var(--base)">🔄 회전 (베이스 S1)</span><span class="val" id="vB">90</span></div>
+          <div class="gauge"><div id="gB" style="background:var(--base)"></div></div>
+        </div>
+        <div class="joint">
+          <div class="top"><span class="nm" style="color:var(--sh)">↕️ 상하 (어깨 S2)</span><span class="val" id="vS">90</span></div>
+          <div class="gauge"><div id="gS" style="background:var(--sh)"></div></div>
+        </div>
+        <div class="joint">
+          <div class="top"><span class="nm" style="color:var(--grip)">🤏 집게 (S4)</span><span class="val" id="vG">45</span></div>
+          <div class="gauge"><div id="gG" style="background:var(--grip)"></div></div>
+        </div>
+        <div class="label" style="margin:10px 0 4px">팔꿈치 (S3) 수동 보정</div>
+        <input id="elbow" type="range" min="0" max="180" value="90">
+        <div class="minirow" style="margin-top:10px">
+          <label class="chk"><input type="checkbox" id="invBase"> 회전 반전</label>
+          <label class="chk"><input type="checkbox" id="invSh"> 상하 반전</label>
+          <label class="chk"><input type="checkbox" id="invGrip"> 집게 반전</label>
+        </div>
+      </div>
+
+      <!-- 주행 패널 -->
+      <div class="card panel" id="drivePanel">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="label">🚗 주행 제어</div><span class="tag drive">DRIVE</span>
+        </div>
+        <div class="drivebox">
+          <div id="count">–</div>
+          <div>
+            <div class="label">손가락 개수 → 명령</div>
+            <div id="driveCmd">대기</div>
+          </div>
+        </div>
+        <div class="legend" style="margin-top:10px">
+          ☝️ <b>1</b> 전진 &nbsp; ✌️ <b>2</b> 후진 &nbsp; 🤟 <b>3</b> 좌회전<br>
+          🖖 <b>4</b> 우회전 &nbsp; ✊ <b>주먹(0)</b> / 손 치우기 → 정지
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 수동 테스트 -->
+  <div class="card">
+    <div class="label" style="margin-bottom:8px">수동 테스트 (연결 확인용)</div>
+    <div class="btns">
+      <button class="sec" data-drive="forward">전진</button>
+      <button class="sec" data-drive="left">좌회전</button>
+      <button class="sec" data-drive="stop">정지</button>
+      <button class="sec" data-drive="right">우회전</button>
+      <button class="sec" data-drive="backward">후진</button>
+      <button class="sec" data-arm="HOME">팔 HOME</button>
+      <button class="sec" data-arm="OPEN">집게 열기</button>
+      <button class="sec" data-arm="CLOSE">집게 닫기</button>
+    </div>
+  </div>
+
+  <div class="card note">
+    <b>사용 순서</b><br>
+    1) 포니봇에서 <code>ai_ponybot_ble.py</code> 실행 → OLED <code>BLE WAITING (ESP-BOT)</code><br>
+    2) <b>블루투스 연결</b> → <code>ESP-BOT</code> 선택 → <b>카메라 시작</b><br>
+    3) <b>엄지 펼치기</b> = 로봇팔 모드(손 위치로 회전/상하, 엄지·검지 간격으로 집게)<br>
+    &nbsp;&nbsp;&nbsp;<b>엄지 접기</b> = 주행 모드(펼친 손가락 개수로 방향, 주먹=정지)<br>
+    ⚠️ HTTPS(GitHub Pages 등)에서만 동작 · Chrome/Edge 지원 · 안전을 위해 로봇팔 모드로 바뀌면 주행은 자동 정지합니다.
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script>
+// ===== Nordic UART (ble_library.py 와 동일) =====
+const UART_SERVICE='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const UART_RX     ='6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const DEV_NAME_PREFIX='ESP';           // ESP32 기기명 접두어 (기본 ESP-BOT)
+
+// ===== 로봇팔 설정 (hand_arm_control 과 동일) =====
+const RANGE = { B:{min:10,max:170}, S:{min:30,max:150}, G:{min:0,max:90} };
+const RATIO_CLOSED=0.15, RATIO_OPEN=0.95;   // 엄지-검지 거리/손크기
+const POS_MIN=0.15, POS_MAX=0.85;           // 손 위치 사용 구간
+const SMOOTH=0.30;                          // EMA 평활
+
+// ===== 주행 설정 (gesture 와 동일) =====
+const DRIVE_STABLE=6;    // 같은 손모양 6프레임 유지 시 전송
+const MODE_STABLE =6;    // 같은 모드 6프레임 유지 시 전환(떨림 방지)
+
+// ===== 상태 =====
+let rxChar=null, camera=null, running=false;
+let mode='ARM';                       // 'ARM' | 'DRIVE'
+let cur={B:90,S:90,G:45}, elbow=90;   // 로봇팔 평활 각도
+let armLastStr='', armLastSend=0;     // 팔 전송 상태
+let driveCand='', driveFrames=0, driveSent='';   // 주행 안정화
+let modeCand=mode, modeFrames=0;      // 모드 안정화
+let thumbTh=0.60;                     // 엄지 벌림 기준값
+
+const $=(id)=>document.getElementById(id);
+const video=$('video'), canvas=$('canvas'), ctx=canvas.getContext('2d');
+const inv={B:()=>$('invBase').checked, S:()=>$('invSh').checked, G:()=>$('invGrip').checked};
+
+// ---------- 표시 ----------
+function setBle(c){ const e=$('bleState'); e.textContent=c?'연결됨':'미연결'; e.className='pill '+(c?'ok':'no'); }
+function setHand(c){ const e=$('handState'); e.textContent=c?'인식 중':'없음'; e.className='pill '+(c?'ok':'no'); }
+function gauge(id,v,min,max){ $('v'+id).textContent=Math.round(v); $('g'+id).style.width=((v-min)/(max-min)*100)+'%'; }
+function paintArm(){ gauge('B',cur.B,RANGE.B.min,RANGE.B.max); gauge('S',cur.S,RANGE.S.min,RANGE.S.max); gauge('G',cur.G,RANGE.G.min,RANGE.G.max); }
+function showMode(){
+  const arm = mode==='ARM';
+  document.body.className = arm?'arm':'drive';
+  $('modeIcon').textContent = arm?'🦾':'🚗';
+  $('modeName').textContent = arm?'로봇팔 모드':'주행 모드';
+  $('modeDesc').textContent = arm
+    ? '엄지를 펼치면 손 위치로 팔을, 엄지·검지 간격으로 집게를 제어합니다.'
+    : '엄지를 접고 손가락 개수로 방향을 정합니다. 주먹은 정지.';
+  $('armPanel').classList.toggle('off', !arm);
+  $('drivePanel').classList.toggle('off', arm);
+}
+
+// ---------- BLE ----------
+async function connectBLE(){
+  if(!navigator.bluetooth){ alert('Web Bluetooth 미지원 브라우저입니다. Chrome/Edge를 쓰세요.'); return; }
+  try{
+    const dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:DEV_NAME_PREFIX}],optionalServices:[UART_SERVICE]});
+    dev.addEventListener('gattserverdisconnected',()=>{rxChar=null;setBle(false);});
+    const srv=await (await dev.gatt.connect()).getPrimaryService(UART_SERVICE);
+    rxChar=await srv.getCharacteristic(UART_RX);
+    setBle(true);
+  }catch(e){ alert('연결 실패: '+e.message); }
+}
+async function send(text){
+  if(!rxChar) return;
+  try{
+    const msg=new TextEncoder().encode(text);
+    if(rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(msg);
+    else await rxChar.writeValue(msg);
+  }catch(e){}
+}
+// 주행 명령 전송 (변화 있을 때만)
+function sendDrive(cmd){
+  $('driveCmd').textContent=cmd;
+  if(cmd!==driveSent){ driveSent=cmd; send(cmd); }
+}
+// 로봇팔 4관절 전송 (변화 있을 때 & 80ms 간격)
+function pushArm(){
+  const s=`B:${Math.round(cur.B)},S:${Math.round(cur.S)},E:${Math.round(elbow)},G:${Math.round(cur.G)}`;
+  const now=performance.now();
+  if(s!==armLastStr && now-armLastSend>80){ send(s); armLastStr=s; armLastSend=now; }
+}
+
+// ---------- 수학 헬퍼 ----------
+function dist(a,b){const dx=a.x-b.x,dy=a.y-b.y,dz=(a.z||0)-(b.z||0);return Math.hypot(dx,dy,dz);}
+function mapClamp(x,inLo,inHi,outLo,outHi,invert){
+  let t=(x-inLo)/(inHi-inLo); t=Math.max(0,Math.min(1,t));
+  if(invert) t=1-t;
+  return outLo + t*(outHi-outLo);
+}
+// 펴진 손가락 개수 (검지·중지·약지·새끼: 위를 향할 때 tip.y < pip.y)
+function countFingers(lm){
+  const pairs=[[8,6],[12,10],[16,14],[20,18]];
+  let c=0; for(const [t,p] of pairs){ if(lm[t].y<lm[p].y) c++; } return c;
+}
+function cmdForCount(c){
+  if(c===1) return 'forward';
+  if(c===2) return 'backward';
+  if(c===3) return 'left';
+  if(c===4) return 'right';
+  return 'stop';               // 0개 or 그 외
+}
+// 엄지 벌림 정도 = 엄지끝(4)~검지MCP(5) 거리 / 손크기(0~9)
+function thumbSpread(lm){
+  const handSize=dist(lm[0],lm[9])||1e-6;
+  return dist(lm[4],lm[5])/handSize;
+}
+
+// ---------- 로봇팔: 랜드마크 -> 목표각 ----------
+function handToArm(lm){
+  const px=lm[9].x, py=lm[9].y;
+  const handSize=dist(lm[0],lm[9])||1e-6;
+  const ratio=dist(lm[4],lm[8])/handSize;
+  const B=mapClamp(px, POS_MIN,POS_MAX, RANGE.B.min,RANGE.B.max, inv.B());
+  const S=mapClamp(py, POS_MIN,POS_MAX, RANGE.S.min,RANGE.S.max, !inv.S());  // 위=팔 위로
+  const G=mapClamp(ratio, RATIO_CLOSED,RATIO_OPEN, RANGE.G.min,RANGE.G.max, inv.G());
+  return {B,S,G};
+}
+
+// ---------- 모드 전환 ----------
+function switchMode(m){
+  if(m===mode) return;
+  mode=m;
+  if(m==='ARM'){ sendDrive('stop'); }        // 안전: 팔 모드로 가면 주행 정지
+  else { armLastStr=''; }                     // 주행→팔 복귀 시 팔 명령 재전송되게
+  showMode();
+}
+
+// ---------- MediaPipe 결과 ----------
+function onResults(res){
+  canvas.width=video.videoWidth||640; canvas.height=video.videoHeight||480;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(res.image,0,0,canvas.width,canvas.height);
+
+  const hands=res.multiHandLandmarks;
+  if(hands && hands.length>0){
+    const lm=hands[0];
+    if(window.drawConnectors){
+      drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'#34d399',lineWidth:3});
+      drawLandmarks(ctx,lm,{color:'#fbbf24',radius:3});
+    }
+    // 엄지-검지 선(집게 시각화)
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath();
+    ctx.moveTo(lm[4].x*canvas.width,lm[4].y*canvas.height);
+    ctx.lineTo(lm[8].x*canvas.width,lm[8].y*canvas.height); ctx.stroke();
+
+    // 1) 엄지 벌림으로 모드 판정 (안정화)
+    const sp=thumbSpread(lm);
+    $('thumbVal').textContent=sp.toFixed(2);
+    $('thumbFill').style.width=Math.min(100, sp/1.2*100)+'%';
+    const wantMode = sp>=thumbTh ? 'ARM' : 'DRIVE';
+    if(wantMode===modeCand) modeFrames++; else { modeCand=wantMode; modeFrames=1; }
+    if(modeFrames>=MODE_STABLE) switchMode(wantMode);
+
+    // 2) 현재 모드에 따라 제어
+    if(mode==='ARM'){
+      const t=handToArm(lm);
+      cur.B+=(t.B-cur.B)*SMOOTH;
+      cur.S+=(t.S-cur.S)*SMOOTH;
+      cur.G+=(t.G-cur.G)*SMOOTH;
+      paintArm(); pushArm();
+      $('count').textContent='–'; $('driveCmd').textContent='(팔 모드)';
+    }else{
+      const c=countFingers(lm);
+      $('count').textContent=c;
+      const cmd=cmdForCount(c);
+      if(cmd===driveCand) driveFrames++; else { driveCand=cmd; driveFrames=1; }
+      if(driveFrames===DRIVE_STABLE) sendDrive(cmd);
+    }
+    setHand(true);
+  }else{
+    // 손 없음 → 안전
+    setHand(false);
+    $('thumbVal').textContent='–'; $('thumbFill').style.width='0%';
+    if(mode==='DRIVE'){ $('count').textContent='–'; sendDrive('stop'); }
+  }
+}
+
+// ---------- 카메라 ----------
+async function startCamera(){
+  const hands=new Hands({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+  hands.setOptions({maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.6, minTrackingConfidence:0.6});
+  hands.onResults(onResults);
+  camera=new Camera(video,{onFrame:async()=>{await hands.send({image:video});}, width:640, height:480});
+  await camera.start();
+  $('btnCam').textContent='📷 작동 중'; $('btnCam').disabled=true;
+}
+
+// ---------- 이벤트 ----------
+$('btnBle').onclick=connectBLE;
+$('btnCam').onclick=startCamera;
+$('btnHome').onclick=()=>{ cur={B:90,S:90,G:45}; elbow=90; $('elbow').value=90; paintArm(); send('HOME'); armLastStr=''; };
+$('elbow').oninput=(e)=>{ elbow=+e.target.value; if(mode==='ARM') pushArm(); };
+$('thumbThr').oninput=(e)=>{ thumbTh=(+e.target.value)/100; $('thumbThrVal').textContent=thumbTh.toFixed(2);
+  $('thumbMark').style.left=(thumbTh/1.2*100)+'%'; };
+// 수동 테스트
+document.querySelectorAll('[data-drive]').forEach(b=>b.onclick=()=>{ driveSent=''; sendDrive(b.dataset.drive); });
+document.querySelectorAll('[data-arm]').forEach(b=>b.onclick=()=>send(b.dataset.arm));
+
+// 초기화
+$('thumbMark').style.left=(thumbTh/1.2*100)+'%';
+paintArm(); showMode();
+</script>
+</body>
+</html>
